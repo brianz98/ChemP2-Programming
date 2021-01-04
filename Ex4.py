@@ -226,7 +226,7 @@ while True:
         LandscapeExplorer(7,Morse(2,4)).scheduler()
     if choice == 4:
         num_particles = int(input('Number of particles:\n'))
-        potential = int(input('1. Lennard-Jones\n   2. Morse\n'))
+        potential = int(input('1. Lennard-Jones\n2. Morse\n'))
         scale_length = float(input('Scale length (e.g sigma for LJ and re/sigma for Morse)\n'))
         scale_energy = float(input('Scale energy (e.g. epsilon for LJ and De for Morse)\n'))
         if potential == 1:
