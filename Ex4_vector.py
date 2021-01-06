@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial import distance
 import copy
 import time
 
@@ -52,48 +53,32 @@ class System:
     This initialises a system of n particles governed by a potential, passed in as a callable Python function
     """
     def __init__(self,n,potential):
-        self.positions = {}
         self.box_size = 3 # A good compromise between likelihood of explosion (small box size) and convergence speed (large box size)
-        self.positions[0] = Vec3d(np.random.uniform(-self.box_size,self.box_size,(3,)))
+        self.n = n
+        self.pot = potential
         """
         The following for loop initiailises the particles in a confirguration that 
         doesn't result in explosion, which is defined as having a non-negative pairwise potential energy
         """
-        self.n = n
-        self.pot = potential
-        for i in range(1,self.n):
-            num_non_explode = 0
-            while num_non_explode != i:
-                self.positions[i] = Vec3d(np.random.uniform(-self.box_size,self.box_size,(3,)))
-                for j in range(i):
-                    diff = self.positions[j] - self.positions[i]
-                    dist = diff.length()
-                    if self.pot(dist) < 0:
-                        num_non_explode += 1
-                    else:
-                        pass
+        max_pot = 1
+        while max_pot > 0:
+            self.positions = np.array([Vec3d(np.random.uniform(-self.box_size,self.box_size,(3,))) for i in range(self.n)])
+            distar = np.tril(distance.cdist(self.positions,self.positions,'euclidean'))
+            max_pot = self.pot(min(distar[np.nonzero(distar)]))
         self.pe = 0 # The potential energy of the system
         self.step = 0
-        self.lamb = {}
         self.lamb_ini = 5e-4
         self.lamb_max = self.lamb_ini*5e4
         self.lamb_min = self.lamb_ini/100
-        for atom in self.positions.keys():
-            self.lamb[atom] = self.lamb_ini # This is the initial learning rate
+        self.lamb = np.array([self.lamb_ini for i in range(self.n)])
+        self.shape = (self.n,3)
 
     def pot_eval(self,pos):
         """
         This evaluates the potential energy of the system at any given configuration. Instead of using the self.positions dictionary the position dictionary needs to be passed as an argument (even if it's self.positions) because it is used to evaluate finite differences in which one atom moves by a small step from self.positions.
         """
-        scalar_dist = {}
-        for i in range(1,self.n):
-            for j in range(i):
-                vec_dist = pos[i]-pos[j]
-                scalar_dist[(i,j)] = vec_dist.length()
-        potential_sum = 0
-        for key in scalar_dist.keys():
-            potential_sum += self.pot(scalar_dist[key])
-        return potential_sum
+        distar = np.tril(distance.cdist(pos,pos,'euclidean'))
+        return sum(self.pot(distar[np.nonzero(distar)]))
     
     def grad_eval(self,update_old):
         """
@@ -106,36 +91,34 @@ class System:
         Overall the update vector is 
         v_{i,t} = gamma*v_{i,t-1} + lamb_{i}*gradient_{i,t}
         """
-        grad = {}          
         h = float(1e-8) # The small constant for computing finite differences
-        gamma = 0 # This is the dampening/momentum constant, usual range 0.8<gamma<0.99 in machine learning, however here it was found 0.6 worked well.
+        gamma = 0.6 # This is the dampening/momentum constant, usual range 0.8<gamma<0.99 in machine learning, however here it was found 0.6 worked well.
         inc = 1.1 # Multiplicative increase constant for lambda.
         dec = 0.05 # This may look excessively small but larger values can cause numerical instability.
         if self.step == 0:
-            update_old = {atom : Vec3d((0,0,0)) for atom in self.positions.keys()}
+            update_old = np.array([Vec3d((0,0,0)) for i in range(self.n)])
             # No old grad dictionary in the first step, just initialize to all zeroes.
-        for atom in self.positions.keys():
-            # This uses the second-order central difference method, with O(h^2) 
+        grad = np.zeros(self.shape)
+        for atom in range(self.n):
             grad_vec = Vec3d((0,0,0))
             for uvec in [0,1,2]:
-                upperdiff = copy.deepcopy(self.positions) # Deepcopy must be used since the dict is keyed by a tuple, i.e., it's nested
-                upperdiff[atom][uvec] += h
-                lowerdiff = copy.deepcopy(self.positions)
-                lowerdiff[atom][uvec] -= h
-                grad_vec[uvec] = (self.pot_eval(upperdiff) - self.pot_eval(lowerdiff))/(2.0*h)
+                difference = np.zeros(self.shape)
+                difference[atom][uvec] = h
+                grad_vec[uvec] = (self.pot_eval(self.positions+difference) - self.pot_eval(self.positions-difference))/(2*h)
+            grad[atom] = grad_vec
             """
             This is an implementation of Rprop (Resilient backpropagation), in which if the new gradient update of an atom has a positive dot product, 
             i.e., roughly in the same direction, with the previous gradient update, then the learning rate increases, otherwise it decreases. 
             The 'braking' should be a lot faster than the 'acceleration' as braking happens near the bottom of the well, which could lead to sudden explosion of the system.
             """
-            if grad_vec * update_old[atom] > 0:
+            if grad_vec * Vec3d(update_old[atom]) > 0:
                 self.lamb[atom] = min(self.lamb[atom] * inc, self.lamb_max)
-            elif grad_vec * update_old[atom] < 0:
+            elif grad_vec * Vec3d(update_old[atom]) < 0:
                 self.lamb[atom] = max(self.lamb[atom] * dec, self.lamb_min)
             else:
                 pass
-            grad[atom] = self.lamb[atom]*grad_vec + gamma*update_old[atom]
-        return grad
+        update_new = np.array([self.lamb[i]*grad[i] for i in range(self.n)]) + gamma*update_old
+        return update_new
     
     def gd_time_stepper(self):
         """
@@ -144,7 +127,7 @@ class System:
         The time stepper also exits when the system is stuck at a high-energy configuration, which happened during debugging but now it rarely if ever happens, left in just in case.
         """
         converge = False
-        update_old = {}
+        update_old = np.array([])
         movement_cap = 0.1 # Prevents explosion
         self.pe = self.pot_eval(self.positions) # Set self.pe to the correct initial value
         delta_pe = 0
@@ -152,14 +135,14 @@ class System:
         while not converge:
             pe_old = self.pe
             print(pe_old)
-            grad = self.grad_eval(update_old)
+            update_new = self.grad_eval(update_old)
             self.step += 1
             print(f'Step {self.step}')
-            for atom in self.positions.keys():
-                if grad[atom].length() > movement_cap:
-                    grad[atom] = movement_cap * grad[atom].unitvec()
-                self.positions[atom] -= grad[atom]
-            update_old = copy.deepcopy(grad)
+            for atom in range(self.n):
+                if Vec3d(update_new[atom]).length() > movement_cap:
+                    update_new[atom] = movement_cap * Vec3d(update_new[atom]).unitvec()
+            self.positions -= update_new
+            update_old = np.copy(update_new)
             self.pe = self.pot_eval(self.positions)
             delta_pe += abs(pe_old - self.pe)
             sum_pe += pe_old
@@ -182,7 +165,7 @@ class System:
         with open(f'{prefix}_{self.n}_{type(self.pot).__name__}_re{self.pot.re}.xyz','w') as f:
             f.write(f'{self.n}\n')
             f.write(f'Optimum geometry of {self.n} atoms governed by {type(self.pot).__name__} potential\n')
-            for atom in self.positions.keys():
+            for atom in range(self.n):
                 f.write(f'Atom_{atom}\t')
                 for i in self.positions[atom]:
                     f.write(f'{i}\t')
@@ -200,7 +183,11 @@ class LandscapeExplorer:
 
     def scheduler(self):
         sys = System(self.n,self.pot)
+        t0 = time.time()
         sys.gd_time_stepper()
+        t1 = time.time()
+        step_time = (t1-t0)/sys.step
+        print(t1-t0,step_time)
         conf_pe = round(sys.pe,2)
         sys.output_xyz(f'{conf_pe}')
 
