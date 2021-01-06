@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.spatial import distance
-import copy
 import time
 
 class Vec3d(np.ndarray):
@@ -183,11 +182,7 @@ class LandscapeExplorer:
 
     def scheduler(self):
         sys = System(self.n,self.pot)
-        t0 = time.time()
         sys.gd_time_stepper()
-        t1 = time.time()
-        step_time = (t1-t0)/sys.step
-        print(t1-t0,step_time)
         conf_pe = round(sys.pe,2)
         sys.output_xyz(f'{conf_pe}')
 
