@@ -146,7 +146,7 @@ class System:
             delta_pe += abs(pe_old - self.pe)
             sum_pe += pe_old
             if self.step % 100 == 0:
-                if delta_pe/100 < 1e-7:
+                if delta_pe/100 < 1e-6:
                     converge = True
                 if sum_pe/100 > 100:
                     print('The system is stuck in a high-energy configuration.')
