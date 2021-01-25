@@ -195,14 +195,14 @@ print('|    Programming Practical Exercise 4  |')
 print('=======================================')
 
 while True:
-    prompt = 'Please choose from the following options:\n   1. 7 particles governed by a Lennard-Jones potential with sigma = 1 and epsilon = 4\n   2. 7 particles governed by a Morse potential with re/sigma = 1 and De = 4\n   3. 7 particles governed by a Morse potential with re/sigma = 2 and De = 4\n   4. Custom\n'
+    prompt = 'Please choose from the following options:\n   1. 7 particles governed by a Lennard-Jones potential with sigma = 1 and epsilon = 1\n   2. 7 particles governed by a Morse potential with re/sigma = 1 and De = 1\n   3. 7 particles governed by a Morse potential with re/sigma = 2 and De = 1\n   4. Custom\n'
     choice = int(input(prompt))
     if choice == 1:
-        LandscapeExplorer(7,LJ(1,4)).scheduler()
+        LandscapeExplorer(7,LJ(1,1)).scheduler()
     if choice == 2:
-        LandscapeExplorer(7,Morse(1,4)).scheduler()
+        LandscapeExplorer(7,Morse(1,1)).scheduler()
     if choice == 3:
-        LandscapeExplorer(7,Morse(2,4)).scheduler()
+        LandscapeExplorer(7,Morse(2,1)).scheduler()
     if choice == 4:
         num_particles = int(input('Number of particles:\n'))
         potential = int(input('1. Lennard-Jones\n2. Morse\n'))
