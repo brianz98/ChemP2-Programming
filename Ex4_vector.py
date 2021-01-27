@@ -28,7 +28,7 @@ class LJ:
     """The Lennard-Jones potential."""
     def __init__(self,re,de):
         self.re = float(re)
-        self.de = float(de)
+        self.de = 4*float(de)
 
     def __call__(self,r):
         """
@@ -36,7 +36,7 @@ class LJ:
         LJ14(r) returns the value of the function at r.
         """
         k = self.re/r
-        return 4*self.de*(k**12-k**6)
+        return self.de*(k**12-k**6)
 
 class Morse:
     """The Morse potential."""
@@ -51,24 +51,27 @@ class System:
     """
     This initialises a system of n particles governed by a potential, passed in as a callable Python function
     """
-    def __init__(self,n,potential):
-        self.box_size = 3 # A good compromise between likelihood of explosion (small box size) and convergence speed (large box size)
+    def __init__(self,n,potential,positions=False):
+        self.box_size = 2.5 # A good compromise between likelihood of explosion (small box size) and convergence speed (large box size)
         self.n = n
         self.pot = potential
         """
         The following for loop initiailises the particles in a confirguration that 
         doesn't result in explosion, which is defined as having a non-negative pairwise potential energy
         """
-        max_pot = 1
-        while max_pot > 0:
-            self.positions = np.array([Vec3d(np.random.uniform(-self.box_size,self.box_size,(3,))) for i in range(self.n)])
-            distar = np.tril(distance.cdist(self.positions,self.positions,'euclidean'))
-            max_pot = self.pot(min(distar[np.nonzero(distar)]))
+        if type(positions) == bool: # If no positions received as input
+            max_pot = 1
+            while max_pot > 0:
+                self.positions = np.array([Vec3d(np.random.uniform(-self.box_size,self.box_size,(3,))) for i in range(self.n)])
+                distar = np.tril(distance.cdist(self.positions,self.positions,'euclidean'))
+                max_pot = self.pot(min(distar[np.nonzero(distar)]))
+        else:
+            self.positions = np.copy(positions)
         self.pe = 0 # The potential energy of the system
         self.step = 0
         self.lamb_ini = 5e-4
-        self.lamb_max = self.lamb_ini*5e4
-        self.lamb_min = self.lamb_ini/100
+        self.lamb_max = self.lamb_ini*1e6
+        self.lamb_min = self.lamb_ini/10
         self.lamb = np.array([self.lamb_ini for i in range(self.n)])
         self.shape = (self.n,3)
 
@@ -90,8 +93,8 @@ class System:
         Overall the update vector is 
         v_{i,t} = gamma*v_{i,t-1} + lamb_{i}*gradient_{i,t}
         """
-        h = float(1e-8) # The small constant for computing finite differences
-        gamma = 0.6 # This is the dampening/momentum constant, usual range 0.8<gamma<0.99 in machine learning, however here it was found 0.6 worked well.
+        h = float(1e-11) # The small constant for computing finite differences
+        gamma = 0 # This is the dampening/momentum constant, usual range 0.8<gamma<0.99 in machine learning, however here it was found 0.6 worked well.
         inc = 1.1 # Multiplicative increase constant for lambda.
         dec = 0.05 # This may look excessively small but larger values can cause numerical instability.
         if self.step == 0:
@@ -146,10 +149,7 @@ class System:
             delta_pe += abs(pe_old - self.pe)
             sum_pe += pe_old
             if self.step % 100 == 0:
-                if delta_pe/100 < 1e-6:
-                    converge = True
-                if sum_pe/100 > 100:
-                    print('The system is stuck in a high-energy configuration.')
+                if delta_pe/100 < 1e-10:
                     converge = True
                 sum_pe = 0
                 delta_pe = 0
@@ -161,9 +161,10 @@ class System:
         meaning this depicts a system of 7 particles governed by a LJ potential with sigma=1.0, which reached equilibrium at -73.69 epsilons.
         """
         pot_re = self.pot.re
-        with open(f'{prefix}_{self.n}_{type(self.pot).__name__}_re{self.pot.re}.xyz','w') as f:
+        pe_round = round(prefix, 2)
+        with open(f'{pe_round}_{self.n}_{type(self.pot).__name__}_re{self.pot.re}.xyz','w') as f:
             f.write(f'{self.n}\n')
-            f.write(f'Optimum geometry of {self.n} atoms governed by {type(self.pot).__name__} potential\n')
+            f.write(f'Optimum geometry of {self.n} atoms governed by {type(self.pot).__name__} potential, equilibrated at {prefix}\n')
             for atom in range(self.n):
                 f.write(f'Atom_{atom}\t')
                 for i in self.positions[atom]:
@@ -181,11 +182,27 @@ class LandscapeExplorer:
         self.pot = pot
 
     def scheduler(self):
-        sys = System(self.n,self.pot)
-        sys.gd_time_stepper()
-        conf_pe = round(sys.pe,2)
-        sys.output_xyz(f'{conf_pe}')
-
+        if type(self.pot).__name__ == 'Morse':
+            sys = System(self.n,self.pot)
+            sys.gd_time_stepper()
+            sys.output_xyz(sys.pe)
+        if type(self.pot).__name__ == 'LJ':
+            sys = System(self.n,self.pot)
+            while True:
+                sys.gd_time_stepper()
+                userinp = input('\nThe system has converged!\nIf not satisfied with this minimum, perform enter to perform mutation and re-converge,\npress any other key + ENTER to save current config and quit.\n')
+                if userinp == '':
+                    eqmpos = np.copy(sys.positions)
+                    mutation_amt = self.pot.re/1.5 # Move everyone by this amount, and make sure no explosion!
+                    max_pot = 1
+                    while max_pot > 0:
+                        rand = np.array([Vec3d(np.random.uniform(-mutation_amt,mutation_amt,(3,))) for i in range(self.n)])
+                        distar = np.tril(distance.cdist((rand+eqmpos),(rand+eqmpos),'euclidean'))
+                        max_pot = self.pot(min(distar[np.nonzero(distar)]))                       
+                    sys = System(self.n,self.pot,(eqmpos+rand))
+                else:
+                    sys.output_xyz(sys.pe)
+                    break
 
 print('=======================================')
 print(u'| Welcome to Brian\'s Energy Minimizer! |')
